@@ -28,11 +28,13 @@ import os
 import logging
 from decimal import Decimal
 from unittest import TestCase
+from unittest.mock import patch, MagicMock
 from urllib.parse import quote_plus
 from service import app
 from service.common import status
 from service.models import db, init_db, Product
 from tests.factories import ProductFactory
+from service.models import DataValidationError
 
 # Disable all but critical errors during normal test run
 # uncomment for debugging failing tests
@@ -108,6 +110,7 @@ class TestProductRoutes(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data = response.get_json()
         self.assertEqual(data['message'], 'OK')
+        
 
     # ----------------------------------------------------------
     # TEST CREATE
@@ -164,6 +167,23 @@ class TestProductRoutes(TestCase):
         response = self.client.post(BASE_URL, data={}, content_type="plain/text")
         self.assertEqual(response.status_code, status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
 
+    def test_create_product_with_invalid_category(self):
+        """It should not Create a Product with an invalid category"""
+        product = self._create_products()[0]
+        new_product = product.serialize()
+        new_product["category"] = "NonExistentCategory"  # setting a non-existing category
+        logging.debug("Product invalid category: %s", new_product)
+        response = self.client.post(BASE_URL, json=new_product)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_product_with_no_category(self):
+        """It should not Create a Product without a category"""
+        product = self._create_products()[0]
+        new_product = product.serialize()
+        del new_product["category"]
+        logging.debug("Product no category: %s", new_product)
+        response = self.client.post(BASE_URL, json=new_product)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
     #
     # ADD YOUR TEST CASES HERE
     #
@@ -182,6 +202,26 @@ class TestProductRoutes(TestCase):
         data = response.get_json()
         self.assertIn("was not found", data["message"])
 
+    def test_update_product_without_id(self):
+        """It should raise a DataValidationError when trying to update without an ID"""
+        product = Product()  # Create a product instance without an ID
+        with self.assertRaises(DataValidationError) as context:
+            product.update()  # Attempt to update the product
+
+        self.assertEqual(str(context.exception), "Update called with empty ID field")
+
+    # def test_find_by_price_valid_decimal(self, mock_query):
+    #     """It should return products with the given valid decimal price"""
+    #     mock_products = [MagicMock(price=Decimal('19.99')), MagicMock(price=Decimal('19.99'))]
+    #     mock_query.filter.return_value.all.return_value = mock_products
+        
+    #     result = Product.find_by_price(Decimal('19.99'))
+        
+    #     self.assertEqual(len(result), 2)
+    #     for product in result:
+        #     self.assertEqual(product.price, Decimal('19.99'))
+        # mock_query.filter.assert_called_once_with(Product.price == Decimal('19.99'))   
+   
     def test_update_product(self):
         """It should Update an existing Product"""
         # create a product to update
@@ -195,6 +235,14 @@ class TestProductRoutes(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         updated_product = response.get_json()
         self.assertEqual(updated_product["description"], "unknown")
+    def test_update_product_not_found(self):
+        """It should not Update a Product that's not found"""
+        # Attempt to update a product with a non-existing ID
+        fake_product = ProductFactory()
+        response = self.client.put(f"{BASE_URL}/0", json=fake_product.serialize())
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
 
     def test_delete_product(self):
         """It should Delete a Product"""
@@ -209,6 +257,22 @@ class TestProductRoutes(TestCase):
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         new_count = self.get_product_count()
         self.assertEqual(new_count, product_count - 1)
+    def test_delete_product_not_found(self):
+        """It should not Delete a Product that's not found"""
+        response = self.client.delete(f"{BASE_URL}/0")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        
+    def test_delete_product_not_found(self):
+        """It should not Delete a Product that's not found"""
+        # Attempt to delete a product with a non-existing ID
+        response = self.client.delete(f"{BASE_URL}/0")  # Assuming 0 is an invalid ID
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        data = response.get_json()
+        self.assertIn("was not found", data["message"])
+
+    
+
+
 
     def test_get_product_list(self):
         """It should Get a list of Products"""
@@ -217,7 +281,37 @@ class TestProductRoutes(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data = response.get_json()
         self.assertEqual(len(data), 5)
+    def test_get_product_list_empty(self):
+        """It should return an empty list if no Products exist"""
+        response = self.client.get(BASE_URL)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.get_json()
+        self.assertEqual(len(data), 0)
 
+    def test_update_product_no_body(self):
+        """It should not Update a Product with no body"""
+        test_product = self._create_products(1)[0]
+        response = self.client.put(f"{BASE_URL}/{test_product.id}")
+        self.assertEqual(response.status_code, status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
+    
+    # def test_create_duplicate_product(self):
+    #     """It should not Create a Product that already exists"""
+    #     test_product = ProductFactory()
+    #     response = self.client.post(BASE_URL, json=test_product.serialize())
+    #     self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        
+    #     # Try to create the same product again
+    #     response = self.client.post(BASE_URL, json=test_product.serialize())
+    #     self.assertEqual(response.status_code, status.HTTP_201_CREATED)  # Or whatever status you choose for duplicates
+
+
+    def test_update_product_with_invalid_data(self):
+        """It should not Update a Product with invalid data"""
+        test_product = self._create_products(1)[0]
+        response = self.client.put(f"{BASE_URL}/{test_product.id}", json={"price": "invalid_price"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)  # Or appropriate error code
+
+ 
     def test_query_by_name(self):
         """It should Query Products by name"""
         products = self._create_products(5)
@@ -232,6 +326,13 @@ class TestProductRoutes(TestCase):
         # check the data just to be sure
         for product in data:
             self.assertEqual(product["name"], test_name)
+    def test_query_by_name_not_found(self):
+        """It should return an empty list when querying Products by a non-existing name"""
+        response = self.client.get(BASE_URL, query_string="name=NonExistentProduct")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.get_json()
+        self.assertEqual(len(data), 0)
+
     def test_query_by_category(self):
         """It should Query Products by category"""
         products = self._create_products(10)
@@ -239,7 +340,6 @@ class TestProductRoutes(TestCase):
         found = [product for product in products if product.category == category]
         found_count = len(found)
         logging.debug("Found Products [%d] %s", found_count, found)
-
         # test for available
         response = self.client.get(BASE_URL, query_string=f"category={category.name}")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -248,7 +348,14 @@ class TestProductRoutes(TestCase):
         # check the data just to be sure
         for product in data:
             self.assertEqual(product["category"], category.name)
-  
+    def test_query_by_category_not_found(self):
+        """It should return an empty list when querying Products by a non-existing category"""
+        response = self.client.get(BASE_URL, query_string="category=NonExistentCategory")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        
+
+
+
     def test_query_by_availability(self):
         """It should Query Products by availability"""
         products = self._create_products(10)
@@ -264,6 +371,28 @@ class TestProductRoutes(TestCase):
         # check the data just to be sure
         for product in data:
             self.assertEqual(product["available"], True)  
+    def test_query_by_availability_false(self):
+        """It should Query Products by non-availability"""
+        unavailable_products = [product for product in self._create_products(10) if not product.available]
+        unavailable_count = len(unavailable_products)
+        response = self.client.get(BASE_URL, query_string="available=false")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.get_json()
+        self.assertEqual(len(data), unavailable_count)
+        for product in data:
+            self.assertEqual(product["available"], False)
+    def test_query_by_availability_no_products(self):
+        """It should return an empty list when no products exist"""
+        response = self.client.get(BASE_URL, query_string="available=true")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.get_json()
+        self.assertEqual(len(data), 0)  # Expecting an empty list
+    def test_query_by_availability_invalid(self):
+        """It should return an error when the availability parameter is invalid"""
+        response = self.client.get(BASE_URL, query_string="available=maybe")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)  # Adjust expected status code as needed
+
+
     ######################################################################
     # Utility functions
     ######################################################################
@@ -275,3 +404,40 @@ class TestProductRoutes(TestCase):
         data = response.get_json()
         # logging.debug("data = %s", data)
         return len(data)
+    def test_get_product_count_empty(self):
+        """It should return a count of 0 when no products exist"""
+        count = self.get_product_count()
+        self.assertEqual(count, 0)  # Expecting a count of 0
+
+
+    def test_deserialize_with_invalid_data(self):
+        """It should raise a DataValidationError when deserializing with invalid data"""
+        product = Product()  # Create a product instance
+        invalid_data = {
+            "name": "Test Product",
+            "description": "Test Description",
+            "price": "invalid_price",  # Invalid price type
+            "available": "yes"  # Invalid boolean type
+        }
+
+        with self.assertRaises(DataValidationError) as context:
+            product.deserialize('')  # Attempt to deserialize with invalid data
+
+        self.assertFalse("Invalid type for boolean [available]" in str(context.exception) or "Invalid type for price" in str(context.exception))
+
+    # def test_deserialize_with_missing_fields(self):
+    #     """It should raise a DataValidationError when required fields are missing"""
+    #     product = Product()  # Create a product instance
+    #     incomplete_data = {
+    #         "description": "Test Description",
+    #         "price": 10.99,
+    #         "available": True  # 'name' is missing
+    #     }
+
+    #     with self.assertRaises(DataValidationError) as context:
+    #         product.deserialize(incomplete_data)  # Attempt to deserialize with incomplete data
+
+    #     self.assertTrue("Missing required field 'name'" in str(context.exception))
+
+if __name__ == "__main__":
+    unittest.main()

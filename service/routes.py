@@ -126,6 +126,10 @@ def list_products():
     # Filter by availability
     elif available:
         app.logger.info("Find by available: %s", available)
+        if available.lower() not in ["true", "false", "yes", "no", "1", "0"]:
+            app.logger.error("Invalid availability value: %s", available)
+            return {"error": "Invalid availability value"}, status.HTTP_400_BAD_REQUEST
+        
         available_value = available.lower() in ["true", "yes", "1"]
         products = Product.find_by_availability(available_value)
     # Default to returning all products
@@ -139,9 +143,6 @@ def list_products():
 
 ######################################################################
 # R E A D   A   P R O D U C T
-######################################################################
-######################################################################
-# READ A PRODUCT
 ######################################################################
 @app.route("/products/<int:product_id>", methods=["GET"])
 def get_products(product_id):
@@ -191,19 +192,15 @@ def update_products(product_id):
 # D E L E T E   A   P R O D U C T
 ######################################################################
 @app.route("/products/<int:product_id>", methods=["DELETE"])
-def delete_products(product_id):
-    """
-    Delete a Product
-
-    This endpoint will delete a Product based the id specified in the path
-    """
-    app.logger.info("Request to Delete a product with id [%s]", product_id)
-
+def delete_product(product_id):
+    """Delete a Product"""
     product = Product.find(product_id)
-    if product:
-        product.delete()
-
+    if not product:
+        abort(404, description=f"Product with id '{product_id}' was not found.")
+    product.delete()
     return "", status.HTTP_204_NO_CONTENT
+
+
 
 #
 # PLACE YOUR CODE TO DELETE A PRODUCT HERE
